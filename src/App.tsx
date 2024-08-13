@@ -58,7 +58,7 @@ function App() {
                   ['Номер по ДТ']: no,
                   ['ТН ВЭД']: productParsed[fieldNamesDT.tnvedNumber],
                   ['Cтоимость по инвойсу']: productParsed[fieldNamesDT.invoiceCost],
-                  ['Описание по ДТ']: productParsed.description
+                  ['Описание по ДТ']: productParsed[fieldNamesDT.description]
                 };
 
                 customsPaymentsParsed?.forEach(payment => {
@@ -72,7 +72,7 @@ function App() {
                 })
               }
 
-              const customsDutyPaymentByProduct = Math.min(customsDutyPayment / dtsoutGoods.length, 0);
+              const customsDutyPaymentByProduct = Math.max(customsDutyPayment / dtsoutGoods.length, 0);
 
               for (const dtsProduct of dtsoutGoods) {
                 const dtsProductParsed = xmlToJson(dtsProduct)
@@ -81,10 +81,11 @@ function App() {
                 const no = dtsProductParsed?.GTDGoodsNumber as string
 
                 if (no && no in goodsData && additionalPased) {
-                  goodsData[no]['Сборы за таможенное оформление'] = customsDutyPaymentByProduct
+                  goodsData[no]['1010'] = customsDutyPaymentByProduct
                   goodsData[no]['Доставка до'] = additionalPased['cat_EDTS_cu:BorderPlace']
                   fieldNamesDTSIterate.forEach(([key, originalKey]) => {
                     if (additionalPased[originalKey]) {
+                      // @ts-expect-error
                       goodsData[no][key] = parseFloat(additionalPased[originalKey]) || additionalPased[originalKey]
                     }
                   })
@@ -92,7 +93,7 @@ function App() {
               }
 
               const workbook = XLSX.utils.book_new();
-              const worksheet = XLSX.utils.json_to_sheet(Object.values(goodsData), { header: ['Номер по ДТ', 'ТН ВЭД', 'Cтоимость по инвойсу', 'Описание по ДТ', 'Сборы за таможенное оформление']})
+              const worksheet = XLSX.utils.json_to_sheet(Object.values(goodsData), { header: ['Номер по ДТ', 'ТН ВЭД', 'Cтоимость по инвойсу', 'Описание по ДТ', 'Доставка до', '1010', '5010', '2010']})
               XLSX.utils.book_append_sheet(workbook, worksheet, "Goods");
               setWb(workbook)
           }
@@ -118,13 +119,13 @@ function App() {
         <div>
           {wb && (
             <>
-            <div dangerouslySetInnerHTML={{ __html: getTable() }}/>
-            <button type="button" className="mt-4 focus:outline-none text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 me-2 mb-2 dark:bg-green-600 dark:hover:bg-green-700 dark:focus:ring-green-800" 
-              onClick={() => {
-                XLSX.writeFile(wb, "Goods.xlsx", { compression: true });
-              }}>
+              <button type="button" className="my-4 focus:outline-none text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 me-2 mb-2 dark:bg-green-600 dark:hover:bg-green-700 dark:focus:ring-green-800" 
+                onClick={() => {
+                  XLSX.writeFile(wb, "Goods.xlsx", { compression: true });
+                }}>
                 Скачать XLSX
               </button>
+              <div dangerouslySetInnerHTML={{ __html: getTable() }} className='mt-4' />
               </>
           )}
         </div>
