@@ -54,10 +54,12 @@ function App() {
                 const productParsed = xmlToJson(product);
                 const no = productParsed[fieldNamesDT.goodNumber] as string
 
+                const invoiceCost: string = productParsed[fieldNamesDT.invoiceCost] || ''
+
                 goodsData[no] = {
                   ['Номер по ДТ']: no,
                   ['ТН ВЭД']: productParsed[fieldNamesDT.tnvedNumber],
-                  ['Cтоимость по инвойсу']: productParsed[fieldNamesDT.invoiceCost],
+                  ['Cтоимость по инвойсу']: parseFloat(invoiceCost) || 0,
                   ['Описание по ДТ']: productParsed[fieldNamesDT.description]
                 };
 
