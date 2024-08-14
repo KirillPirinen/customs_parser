@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import { FileInput } from './components/FileInput'
-import { xmlListToJson, xmlToJson } from './utils'
+import { loadPIExcelFile, xmlListToJson, xmlToJson } from './utils'
 import * as XLSX from 'xlsx';
 
 const selectGoods = 'ESADout_CUGoods'
 const selectDTSGoods = 'DTSout_CUGoodsCustomsCost'
 const selectCustomPaymentsFromGood = 'ESADout_CUCustomsPaymentCalculation'
+const selectGroupInfo = 'catESAD_cu:GoodsGroupInformation'
+const selectGroupInfoQty = 'catESAD_cu:GoodsGroupQuantity' // format 79ШТ796'
+const selectGroupInfoModel = 'catESAD_cu:GoodsModel'
+const selectGroupInfoWeight = 'catESAD_cu:ArticleWeight'
+const selectNetWeight = 'catESAD_cu:NetWeightQuantity'
+const selectPositionWeight = 'catESAD_cu:ArticleWeight'
 
 const fieldNamesDT = {
   goodNumber: 'catESAD_cu:GoodsNumeric',
@@ -17,19 +23,31 @@ const fieldNamesDT = {
   description: 'catESAD_cu:GoodsDescription'
 }
 
-const fieldNamesDTS = {
-  Доставка: 'cat_EDTS_cu:BorderTransportCharges',
+const fieldNamesGroupInfo = {
+  ['Модель']: selectGroupInfoModel,
+  ['Производитель']: 'catESAD_cu:Manufacturer',
+  ['Вес']: selectGroupInfoWeight,
+}
+
+const fieldNamesDTSBySum = {
   ['Cтрахование товаров']: 'cat_EDTS_cu:InsuranceCharges',
   ['Платежи ИС']: 'cat_EDTS_cu:IntellectualPropertyPayment',
+  ['Доход агента']: 'cat_EDTS_cu:SellerIncome',
+}
+
+const fieldNamesDTSByWeight = {
+  Доставка: 'cat_EDTS_cu:BorderTransportCharges',
   ['Погрузка']: 'cat_EDTS_cu:LoadCharges',
   ['Упаковка']: 'cat_EDTS_cu:PackageExpenses',
-  ['Доход агента']: 'cat_EDTS_cu:SellerIncome',
   ['Хранение']: 'cat_EDTS_cu:StoreCost',
 }
 
-const fieldNamesDTSIterate = Object.entries(fieldNamesDTS)
+const fieldNamesGroupInfoIterate = Object.entries(fieldNamesGroupInfo)
+const fieldNamesBySumDTSIterate = Object.entries(fieldNamesDTSBySum)
+const fieldNamesByWeightDTSIterate = Object.entries(fieldNamesDTSByWeight)
 
 function App() {
+  const [meta, setMeta] = useState<{ count: number, dict: Record<string, { total: number, billNo: number, id: string }> }>()
   const [file, setFile] = useState<File>()
   const [wb, setWb] = useState<XLSX.WorkBook>()
 
@@ -47,21 +65,25 @@ function App() {
               const goodsData: Record<string, any> = {}
 
               let customsDutyPayment = 0
+              const bySumRatios: Record<string, number> = {}
+              const byWeightRatios: Record<string, number> = {}
+              const totalNetWeight = 0
+              let totalPositions = 0
+
+              const innerGroups: Record<string, Array<Record<string, any>>> = {}
 
               for (const product of goodsOut) {
+                const groups = product.getElementsByTagName(selectGroupInfo)
                 const customsPayments = product.getElementsByTagName(selectCustomPaymentsFromGood)
                 const customsPaymentsParsed = customsPayments && xmlListToJson(customsPayments)
+                const groupsParsed = groups && xmlListToJson(groups)
                 const productParsed = xmlToJson(product);
                 const no = productParsed[fieldNamesDT.goodNumber] as string
+                const productWeight = productParsed[selectNetWeight] ? parseFloat(productParsed[selectNetWeight] as string) : undefined
 
-                const invoiceCost: string = productParsed[fieldNamesDT.invoiceCost] || ''
+                innerGroups[no] = []
 
-                goodsData[no] = {
-                  ['Номер по ДТ']: no,
-                  ['ТН ВЭД']: productParsed[fieldNamesDT.tnvedNumber],
-                  ['Cтоимость по инвойсу']: parseFloat(invoiceCost) || 0,
-                  ['Описание по ДТ']: productParsed[fieldNamesDT.description]
-                };
+                const payments: Record<string, number> = {}
 
                 customsPaymentsParsed?.forEach(payment => {
                   const paymentCode = payment[fieldNamesDT.paymentCode] as string
@@ -69,40 +91,107 @@ function App() {
                   if (paymentCode === '1010') {
                     customsDutyPayment = parseFloat(paymentAmount);
                   } else if (paymentCode && paymentAmount) {
-                    goodsData[no][paymentCode] = parseFloat(paymentAmount)
+                    payments[paymentCode] = parseFloat(paymentAmount)
                   }
+                })
+
+                const productInvoiceCost = parseFloat(productParsed['catESAD_cu:InvoicedCost'] as string)
+
+                groupsParsed.forEach((group, i) => {
+                  totalPositions += 1
+
+                  const qty = (group[selectGroupInfoQty] as string)?.split('ШТ')?.[0]
+                  const id = group[selectGroupInfoModel] as string
+                  const metaData = id && meta?.dict[id]
+                  const _innerId = `${no}.${i + 1}`
+                  const invoiceCost = metaData ? metaData.total : '-'
+                  const positionWeight = group[selectPositionWeight] ? parseFloat(group[selectPositionWeight] as string) : undefined
+
+                  goodsData[_innerId] = {
+                    ['Номер по ДТ']: no,
+                    ['ТН ВЭД']: productParsed[fieldNamesDT.tnvedNumber],
+                    ['Количество']: qty ? parseInt(qty) : 0,
+                    ['Номер счета']: metaData ? metaData.billNo : '-',
+                    ['Cумма по инвойсу']: metaData ? invoiceCost : '-',
+                    ...fieldNamesGroupInfoIterate.reduce<Record<string, any>>((acc, [key, origKey]) => {
+                      acc[key] = group[origKey] || '-'
+                      return acc
+                    }, {})
+                  };
+
+                  if (productWeight && positionWeight) {
+                    byWeightRatios[_innerId] = positionWeight / productWeight
+                  }
+
+                  if (metaData && typeof invoiceCost === 'number') {
+                    const ratio = invoiceCost / productInvoiceCost
+                    bySumRatios[_innerId] = ratio
+                    Object.keys(payments).forEach(paymentCode => {
+                      goodsData[_innerId][paymentCode] = payments[paymentCode] * ratio
+                    })
+                  }
+
+                  if (metaData && typeof invoiceCost === 'number') {
+                    const ratio = invoiceCost / productInvoiceCost
+                    bySumRatios[_innerId] = ratio
+                    Object.keys(payments).forEach(paymentCode => {
+                      goodsData[_innerId][paymentCode] = payments[paymentCode] * ratio
+                    })
+                  }
+
+                  innerGroups[no].push(goodsData[_innerId])
                 })
               }
 
-              const customsDutyPaymentByProduct = Math.max(customsDutyPayment / dtsoutGoods.length, 0);
+              const customsDutyPaymentByPosition = Math.max(customsDutyPayment / totalPositions, 0);
 
               for (const dtsProduct of dtsoutGoods) {
                 const dtsProductParsed = xmlToJson(dtsProduct)
                 const additional = dtsProduct.getElementsByTagName('cat_EDTS_cu:Method1AdditionalSum')?.[0]
                 const additionalPased = additional && xmlToJson(additional);
                 const no = dtsProductParsed?.GTDGoodsNumber as string
+                const positions = innerGroups[no]
 
-                if (no && no in goodsData && additionalPased) {
-                  goodsData[no]['1010'] = customsDutyPaymentByProduct
-                  goodsData[no]['Доставка до'] = additionalPased['cat_EDTS_cu:BorderPlace']
-                  fieldNamesDTSIterate.forEach(([key, originalKey]) => {
-                    if (additionalPased[originalKey]) {
-                      // @ts-expect-error
-                      goodsData[no][key] = parseFloat(additionalPased[originalKey]) || additionalPased[originalKey]
-                    }
+                if (positions?.length && additionalPased) {
+                  positions.forEach((position, i) => {
+                    const _innerId = `${no}.${i + 1}`
+                    position['1010'] = customsDutyPaymentByPosition
+                    position['Доставка до'] = additionalPased['cat_EDTS_cu:BorderPlace']
+                    
+                    fieldNamesBySumDTSIterate.forEach(([key, originalKey]) => {
+                      if (additionalPased[originalKey]) {
+                        const ratio = bySumRatios[_innerId]
+                        if (ratio) {
+                          // @ts-expect-error
+                          const dtsSumPerItem = parseFloat(additionalPased[originalKey])
+                          position[key] = dtsSumPerItem * ratio
+                        }
+                      }
+                    })
+                    
+                    fieldNamesByWeightDTSIterate.forEach(([key, originalKey]) => {
+                      if (additionalPased[originalKey]) {
+                        const ratio = byWeightRatios[_innerId]
+                        if (ratio) {
+                          // @ts-expect-error
+                          const dtsSumPerItem = parseFloat(additionalPased[originalKey])
+                          position[key] = dtsSumPerItem * ratio
+                        }
+                      }
+                    })
                   })
                 }
               }
 
               const workbook = XLSX.utils.book_new();
-              const worksheet = XLSX.utils.json_to_sheet(Object.values(goodsData), { header: ['Номер по ДТ', 'ТН ВЭД', 'Cтоимость по инвойсу', 'Описание по ДТ', 'Доставка до', '1010', '5010', '2010']})
+              const worksheet = XLSX.utils.json_to_sheet(Object.values(goodsData), { header: ['Номер по ДТ', 'ТН ВЭД', 'Количество', 'Номер счета', 'Cумма по инвойсу', 'Модель', 'Производитель', 'Вес', 'Доставка до', '1010', '5010', '2010']})
               XLSX.utils.book_append_sheet(workbook, worksheet, "Goods");
               setWb(workbook)
           }
       }
       reader.readAsText(file);
     }
-  }, [file])
+  }, [file, meta])
 
 
   const getTable = () => {
@@ -117,7 +206,29 @@ function App() {
   return (
     <>
       <div>
-        <FileInput onChange={setFile} />
+        <FileInput 
+          onChange={async (file) => {
+            const jsonSheet = await loadPIExcelFile(file)
+            let count = 0
+            const dict = jsonSheet.reduce((acc, row) => {
+              if (Array.isArray(row)) {
+                const rawId = row[1]
+                const id: string = rawId ? rawId.toString().trim() : undefined
+                const total = row[7]
+                const billNo = row[8]
+                if (id && typeof total ==='number' && billNo) {
+                  count += 1
+                  acc[id] = { id, total, billNo }
+                }
+              }
+              return acc
+            }, {} as NonNullable<typeof meta>['dict'])
+            setMeta({ dict, count })
+          }}
+          accept="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+          description='Инвойс с товарами типо PI.....'
+        />
+        <FileInput onChange={setFile} accept="application/xml" description='XML Декларации на товары с ДТС' />
         <div>
           {wb && (
             <>
