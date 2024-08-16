@@ -46,8 +46,18 @@ const fieldNamesGroupInfoIterate = Object.entries(fieldNamesGroupInfo)
 const fieldNamesBySumDTSIterate = Object.entries(fieldNamesDTSBySum)
 const fieldNamesByWeightDTSIterate = Object.entries(fieldNamesDTSByWeight)
 
+const tariffs = new Map([
+  [10, 12500],
+  [50, 18750],
+  [100, 25000],
+  [200, 31250],
+  [300, 37500],
+  [400, 43750],
+  [500, 50000],
+])
+
 function App() {
-  const [meta, setMeta] = useState<{ count: number, dict: Record<string, { total: number, billNo: number, id: string }> }>()
+  const [meta, setMeta] = useState<{ count: number, tariff: number, dict: Record<string, { total: number, billNo: number, id: string }> }>()
   const [file, setFile] = useState<File>()
   const [wb, setWb] = useState<XLSX.WorkBook>()
 
@@ -149,7 +159,7 @@ function App() {
               }
 
               const customsDutyPaymentByPosition = Math.max(customsDutyPayment / totalPositions, 0);
-
+              const consulatationPaymentByPosition = Math.max((meta?.tariff || 0) / totalPositions, 0);
 
               for (const dtsProduct of dtsoutGoods) {
                 const dtsProductParsed = xmlToJson(dtsProduct)
@@ -162,6 +172,7 @@ function App() {
                   positions.forEach((position, i) => {
                     const _innerId = `${no}.${i + 1}`
                     position['1010'] = customsDutyPaymentByPosition
+                    position['Консультации'] = consulatationPaymentByPosition
                     position['Доставка до'] = additionalPased['cat_EDTS_cu:BorderPlace']
                     
                     fieldNamesBySumDTSIterate.forEach(([key, originalKey]) => {
@@ -212,7 +223,7 @@ function App() {
   return (
     <>
       <div>
-        <div>V2</div>
+        <div>V3</div>
         <FileInput 
           onChange={async (file) => {
             const jsonSheet = await loadPIExcelFile(file)
@@ -231,11 +242,37 @@ function App() {
               }
               return acc
             }, {} as NonNullable<typeof meta>['dict'])
-            setMeta({ dict, count })
+
+            let tariff: number = 56250
+
+            for (const [key, value] of tariffs) {
+              if (count <= key) {
+                tariff = value
+                break;
+              }
+            }
+
+            setMeta({ dict, count, tariff })
           }}
           accept="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
           description='Инвойс с товарами типо PI.....'
         />
+        {meta?.count && (
+          <div>
+            Количество позиций в инвойсе {meta?.count} тариф консультаций
+            <input 
+              type="number"
+              id="first_name"
+              className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
+              value={String(meta?.tariff)}
+              onChange={(e) => {
+                const val = parseInt(e.target.value)
+                // @ts-expect-error
+                setMeta(prev => ({ ...prev, tariff: val }))
+              }}
+            />
+          </div>
+        )}
         <FileInput onChange={setFile} accept="application/xml" description='XML Декларации на товары с ДТС' />
         <div>
           {wb && (
