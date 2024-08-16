@@ -67,7 +67,6 @@ function App() {
               let customsDutyPayment = 0
               const bySumRatios: Record<string, number> = {}
               const byWeightRatios: Record<string, number> = {}
-              const totalNetWeight = 0
               let totalPositions = 0
 
               const innerGroups: Record<string, Array<Record<string, any>>> = {}
@@ -97,12 +96,14 @@ function App() {
 
                 const productInvoiceCost = parseFloat(productParsed['catESAD_cu:InvoicedCost'] as string)
 
+                let totalRation = 0
+                let totalInvPart = 0
+
                 groupsParsed.forEach((group, i) => {
                   totalPositions += 1
-
-                  const qty = (group[selectGroupInfoQty] as string)?.split('ШТ')?.[0]
-                  const id = group[selectGroupInfoModel] as string
-                  const metaData = id && meta?.dict[id]
+                  const qty = (group[selectGroupInfoQty] as string)?.split('ШТ')?.[0]?.trim()
+                  const id = `${group[selectGroupInfoModel]}_${qty}` as string
+                  const metaData = id && meta?.dict[id] 
                   const _innerId = `${no}.${i + 1}`
                   const invoiceCost = metaData ? metaData.total : '-'
                   const positionWeight = group[selectPositionWeight] ? parseFloat(group[selectPositionWeight] as string) : undefined
@@ -125,6 +126,10 @@ function App() {
 
                   if (metaData && typeof invoiceCost === 'number') {
                     const ratio = invoiceCost / productInvoiceCost
+                    
+                    totalRation += ratio
+                    totalInvPart += invoiceCost
+
                     bySumRatios[_innerId] = ratio
                     Object.keys(payments).forEach(paymentCode => {
                       goodsData[_innerId][paymentCode] = payments[paymentCode] * ratio
@@ -144,6 +149,7 @@ function App() {
               }
 
               const customsDutyPaymentByPosition = Math.max(customsDutyPayment / totalPositions, 0);
+
 
               for (const dtsProduct of dtsoutGoods) {
                 const dtsProductParsed = xmlToJson(dtsProduct)
@@ -206,14 +212,16 @@ function App() {
   return (
     <>
       <div>
+        <div>V2</div>
         <FileInput 
           onChange={async (file) => {
             const jsonSheet = await loadPIExcelFile(file)
             let count = 0
             const dict = jsonSheet.reduce((acc, row) => {
               if (Array.isArray(row)) {
-                const rawId = row[1]
-                const id: string = rawId ? rawId.toString().trim() : undefined
+                const rawId = row[1]?.toString().trim()
+                const rawQty = row[6]?.toString().trim()
+                const id: string = rawId ? `${rawId}_${rawQty}` : ''
                 const total = row[7]
                 const billNo = row[8]
                 if (id && typeof total ==='number' && billNo) {
